@@ -1,0 +1,7 @@
+<resources>
+    <!-- Nur für Startfenster/Systemleisten; das eigentliche Design kommt aus Compose (SimplestCutTheme). -->
+    <style name="Theme.SimplestCut" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

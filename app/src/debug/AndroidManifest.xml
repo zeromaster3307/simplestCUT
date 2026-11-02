@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Nur in der Debug-Version: Schnitt-Tests, gestartet per adb (siehe scripts/spike.sh). -->
+        <activity
+            android:name=".debug.SpikeActivity"
+            android:exported="true" />
+        <activity
+            android:name=".debug.MoveSpikeActivity"
+            android:exported="true" />
+    </application>
+</manifest>

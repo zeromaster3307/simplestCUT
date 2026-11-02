@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Entwicklungsversion (Paket app.simplestcut.dev) neben der Play-Store-Version unterscheidbar machen. -->
+    <string name="app_name" translatable="false">simplestCUT Dev</string>
+</resources>

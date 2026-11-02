@@ -1,0 +1,27 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+
+# Testclips und Ausgaben nicht ins Repo
+testclips/
+*.mp4
+*.mov
+
+# System
+.DS_Store
+
+# Screenshots vom Handy
+screenshots/
+
+# Release-APKs (Schlüssel liegt außerhalb in ../simplestCUT-schluessel)
+releases/
