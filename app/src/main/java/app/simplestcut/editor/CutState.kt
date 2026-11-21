@@ -3,6 +3,7 @@ package app.simplestcut.editor
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -12,6 +13,9 @@ import app.simplestcut.effects.WholeFx
 
 /** Stärkster Zoom: so viel Zeit passt mindestens auf die Timeline-Breite. */
 private const val MIN_VISIBLE_US = 3_000_000.0
+
+/** So viele Schritte lassen sich höchstens rückgängig machen. */
+private const val MAX_HISTORY = 100
 
 /** Ein behaltenes Stück des Originals: Bilder [start, end). */
 data class Part(val start: Int, val end: Int)
@@ -164,6 +168,53 @@ class CutState(val frames: FrameIndex) {
         private set
 
     val hasEffects get() = !whole.isNone || spans.isNotEmpty()
+
+    /** Was den Schnitt ausmacht (ohne Auswahl, Ansicht und Abspielposition): ein Schritt für Rückgängig/Wiederholen. */
+    data class Snapshot(val parts: List<Part>, val markers: List<Int>, val whole: WholeFx, val spans: List<FxSpan>)
+
+    fun snapshot() = Snapshot(layout.parts, markers.toList(), whole, spans)
+
+    /** Verlauf für Rückgängig/Wiederholen; [historyIndex] zeigt auf den aktuellen Stand. Gilt für diese Schnittsitzung. */
+    private val history = mutableStateListOf(snapshot())
+    private var historyIndex by mutableIntStateOf(0)
+
+    val canUndo get() = historyIndex > 0
+    val canRedo get() = historyIndex < history.lastIndex
+
+    /** Stand [s] als neuen Schritt merken, falls er sich geändert hat (verwirft, was sich wiederholen liesse). */
+    fun commit(s: Snapshot = snapshot()) {
+        if (s == history[historyIndex]) return
+        while (history.lastIndex > historyIndex) history.removeAt(history.lastIndex)
+        history += s
+        if (history.size > MAX_HISTORY) history.removeAt(0)
+        historyIndex = history.lastIndex
+    }
+
+    fun undo() {
+        commit()
+        if (!canUndo) return
+        historyIndex -= 1
+        restore(history[historyIndex])
+    }
+
+    fun redo() {
+        commit()
+        if (!canRedo) return
+        historyIndex += 1
+        restore(history[historyIndex])
+    }
+
+    private fun restore(s: Snapshot) {
+        layout = Layout(frames, s.parts)
+        markers.clear()
+        markers.addAll(s.markers)
+        whole = s.whole
+        spans = s.spans
+        selectedEdge = null
+        draggedBlock = null
+        dropGap = null
+        clampView()
+    }
 
     /** Effekte, die nur mit Neukodieren gehen (alles ausser Drehen des ganzen Videos): dann kein Speichern. */
     val needsReencode get() = whole.crop != null || spans.any { s -> layout.parts.any { s.start < it.end && it.start < s.end } }

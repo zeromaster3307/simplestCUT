@@ -197,6 +197,7 @@
         <item quantity="other">%1$d videos moved to trash</item>
     </plurals>
     <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
     <string name="version_debug"> (developer version)</string>
     <!-- Effekte -->
     <string name="effects">Effects</string>

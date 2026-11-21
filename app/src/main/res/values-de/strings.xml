@@ -194,6 +194,7 @@
         <item quantity="other">%1$d Videos in den Papierkorb verschoben</item>
     </plurals>
     <string name="undo">Rückgängig</string>
+    <string name="redo">Wiederholen</string>
     <string name="version_debug"> (Entwicklerversion)</string>
     <!-- Effekte -->
     <string name="effects">Effekte</string>

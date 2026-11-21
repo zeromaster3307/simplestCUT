@@ -68,6 +68,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.gestures.calculatePan
@@ -118,6 +119,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import app.simplestcut.gallery.SaveIcon
+import app.simplestcut.gallery.UndoIcon
+import app.simplestcut.gallery.RedoIcon
 import app.simplestcut.gallery.ScissorsIcon
 import app.simplestcut.gallery.SplitIcon
 import app.simplestcut.gallery.VideoItem
@@ -277,11 +280,38 @@ fun EditorScreen(
     }
 
     /**
+     * Rückgängig ([back]) oder Wiederholen. Danach am selben Bild bleiben, wenn es noch im Ergebnis ist,
+     * sonst an derselben Stelle im Ergebnis.
+     */
+    fun stepHistory(back: Boolean) {
+        val state = cut ?: return
+        val frame = state.frames.frameAt(playheadUs + 999)
+        val result = state.layout.resultOfFrame(frame) ?: 0
+        if (back) state.undo() else state.redo()
+        val total = state.layout.totalFrames
+        if (total == 0) return
+        showFrame(if (state.layout.resultOfFrame(frame) != null) frame else state.layout.frameOfResult(result.coerceIn(0, total - 1)))
+    }
+
+    /**
+     * Finger auf dem Bildschirm: Änderungen werden erst nach dem Loslassen als Schritt gemerkt, so wird
+     * Ziehen (Balken, Zuschneide-Rahmen) ein einziger Schritt statt vieler Zwischenstände.
+     */
+    var touching by remember { mutableStateOf(false) }
+    LaunchedEffect(cut) {
+        val state = cut ?: return@LaunchedEffect
+        snapshotFlow { if (touching) null else state.snapshot() }.collect { s -> s?.let(state::commit) }
+    }
+
+    /**
      * Doppeltippen: vor/zurück wie die Spul-Knöpfe des Players (15 s / 5 s), im Cut auf der Zeit des Ergebnisses;
      * läuft weiter, wenn es lief.
      */
     val seekFlash = remember { SeekFlash() }
+    val playerControls = remember { PlayerControls() }
     fun seekBy(forward: Boolean) {
+        // Sofort, noch im zweiten Tipp: sonst kommt das mittlere Bedienfeld kurz durch.
+        playerControls.hideForSeek()
         val stepMs = if (forward) player.seekForwardIncrement else player.seekBackIncrement
         val deltaUs = stepMs * 1000L * (if (forward) 1 else -1)
         val state = cut
@@ -403,6 +433,18 @@ fun EditorScreen(
         onDispose { if (hideStatusBar) bars?.show(WindowInsetsCompat.Type.statusBars()) }
     }
 
+    /** Rückgängig/Wiederholen im Schnittmodus; ausgegraut, solange es nichts gibt. */
+    @Composable
+    fun RowScope.historyActions() {
+        val state = c ?: return
+        IconButton(onClick = { stepHistory(back = true) }, enabled = exportProgress == null && state.canUndo) {
+            Icon(UndoIcon, contentDescription = stringResource(R.string.undo))
+        }
+        IconButton(onClick = { stepHistory(back = false) }, enabled = exportProgress == null && state.canRedo) {
+            Icon(RedoIcon, contentDescription = stringResource(R.string.redo))
+        }
+    }
+
     @Composable
     fun RowScope.saveActions() {
         IconButton(onClick = { export(reencode = true) }, enabled = exportProgress == null) {
@@ -478,6 +520,15 @@ fun EditorScreen(
     }
 
     Scaffold(
+        // Nur mitlesen (nichts verbrauchen): liegt ein Finger auf? Siehe [touching].
+        modifier = Modifier.pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    touching = event.changes.any { it.pressed }
+                }
+            }
+        },
         topBar = {
             if (compact) {
                 // keine Titelzeile
@@ -503,7 +554,7 @@ fun EditorScreen(
                             Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cut_finish))
                         }
                     },
-                    actions = { saveActions() },
+                    actions = { historyActions(); saveActions() },
                 )
             }
         },
@@ -545,7 +596,8 @@ fun EditorScreen(
                 } else {
                     VideoPlayer(
                         player, showControls = c == null, dim = settings.controlsDim,
-                        onControlsVisible = { controlsVisible = it }, modifier = Modifier.fillMaxSize(),
+                        onControlsVisible = { controlsVisible = it }, controls = playerControls,
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
                 SeekFlashOverlay(seekFlash)
@@ -585,7 +637,7 @@ fun EditorScreen(
                     playheadFrame = c.frames.frameAt(playheadUs + 999),
                     isPlaying = isPlaying,
                     compact = compact,
-                    extraActions = { saveActions() },
+                    extraActions = { historyActions(); saveActions() },
                     effectsMenu = { effectsMenu() },
                     onShowFrame = ::showFrame,
                     onEdgeDrag = { frame ->
@@ -868,6 +920,8 @@ private fun VideoPlayer(
     showControls: Boolean,
     dim: ControlsDim,
     onControlsVisible: (Boolean) -> Unit = {},
+    /** Griff von aussen auf die Steuerung (Doppeltipp-Sprung blendet sie aus). */
+    controls: PlayerControls? = null,
     modifier: Modifier = Modifier,
 ) {
     val currentOnControlsVisible by rememberUpdatedState(onControlsVisible)
@@ -882,9 +936,13 @@ private fun VideoPlayer(
         LaunchedEffect(playerView, showControls, orientation) {
             playerView?.let { currentOnControlsVisible(showControls && it.isControllerFullyVisible) }
         }
+        DisposableEffect(playerView, controls) {
+            controls?.view = playerView as? DelayedTapPlayerView
+            onDispose { controls?.view = null }
+        }
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
+                DelayedTapPlayerView(ctx).apply {
                     playerView = this
                     this.player = WithoutTrackSelection(player)
                     setShowNextButton(false)
@@ -941,3 +999,35 @@ private class WithoutTrackSelection(player: Player) : ForwardingPlayer(player) {
         command != Player.COMMAND_SET_TRACK_SELECTION_PARAMETERS && super.isCommandAvailable(command)
 }
 
+/**
+ * Player, der die Steuerung bei einem Tipp erst kurz verzögert einblendet: kommt in der Zeit der zweite Tipp
+ * eines Doppeltipps (Springen), erscheint sie gar nicht erst ([hideForSeek]). Ausblenden geht sofort.
+ */
+internal class DelayedTapPlayerView(context: android.content.Context) : PlayerView(context) {
+    private val delayMs = 200L // Test: kürzer als die Doppeltipp-Zeit (300 ms)
+    private val pendingShow = Runnable { super.performClick() }
+
+    override fun performClick(): Boolean {
+        removeCallbacks(pendingShow)
+        if (isControllerFullyVisible) return super.performClick()
+        postDelayed(pendingShow, delayMs)
+        return true
+    }
+
+    /** Nach einem Doppeltipp-Sprung: verzögertes Einblenden verwerfen und die Steuerung ausblenden. */
+    fun hideForSeek() {
+        removeCallbacks(pendingShow)
+        hideController()
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(pendingShow)
+        super.onDetachedFromWindow()
+    }
+}
+
+/** Verbindung vom Editor zur Steuerung des Players (nur im Player-Modus belegt). */
+class PlayerControls {
+    internal var view: DelayedTapPlayerView? = null
+    fun hideForSeek() { view?.hideForSeek() }
+}
