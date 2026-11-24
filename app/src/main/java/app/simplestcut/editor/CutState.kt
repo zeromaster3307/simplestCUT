@@ -7,7 +7,9 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.simplestcut.effects.CensorFx
 import app.simplestcut.effects.FxSpan
+import app.simplestcut.effects.TextFx
 import app.simplestcut.effects.SectionFx
 import app.simplestcut.effects.WholeFx
 
@@ -217,7 +219,7 @@ class CutState(val frames: FrameIndex) {
     }
 
     /** Effekte, die nur mit Neukodieren gehen (alles ausser Drehen des ganzen Videos): dann kein Speichern. */
-    val needsReencode get() = whole.crop != null || spans.any { s -> layout.parts.any { s.start < it.end && it.start < s.end } }
+    val needsReencode get() = whole.needsReencode || spans.any { s -> layout.parts.any { s.start < it.end && it.start < s.end } }
 
     val hasChanges get() = layout.parts != initialParts || markers.toList() != initialMarkers || hasEffects
 
@@ -240,6 +242,24 @@ class CutState(val frames: FrameIndex) {
         spans = result
     }
 
+    /** Texte des ganzen Videos ([wholeScope]) bzw. von Baustein [block]. */
+    fun texts(block: Int?, wholeScope: Boolean): List<TextFx> =
+        if (wholeScope || block == null) whole.texts else blockFx(block).texts
+
+    fun setTexts(block: Int?, wholeScope: Boolean, list: List<TextFx>) {
+        if (wholeScope || block == null) whole = whole.copy(texts = list)
+        else setBlockFx(block, blockFx(block).copy(texts = list))
+    }
+
+    /** Zensur des ganzen Videos ([wholeScope]) bzw. von Baustein [block]. */
+    fun censors(block: Int?, wholeScope: Boolean): List<CensorFx> =
+        if (wholeScope || block == null) whole.censors else blockFx(block).censors
+
+    fun setCensors(block: Int?, wholeScope: Boolean, list: List<CensorFx>) {
+        if (wholeScope || block == null) whole = whole.copy(censors = list)
+        else setBlockFx(block, blockFx(block).copy(censors = list))
+    }
+
     /** Behaltene Bildbereiche mit ihrem Effekt, in Ergebnis-Reihenfolge (gleicher Effekt zusammengefasst). */
     fun effectRanges(): List<Pair<IntRange, SectionFx>> {
         val result = mutableListOf<Pair<IntRange, SectionFx>>()
@@ -257,6 +277,37 @@ class CutState(val frames: FrameIndex) {
         }
         return result
     }
+
+    /**
+     * Zusammenhängende Stücke des Ergebnisses mit demselben Effekt (in Ergebnis-Reihenfolge): Bildbereiche,
+     * Effekt und Ergebnis-Zeit [startUs, endUs). Text eines Bausteins blendet an deren Anfang und Ende ein/aus.
+     */
+    class FxRun(val ranges: List<IntRange>, val fx: SectionFx, val startUs: Long, val endUs: Long)
+
+    fun effectRuns(): List<FxRun> {
+        val runs = mutableListOf<FxRun>()
+        var group = mutableListOf<IntRange>()
+        var fx: SectionFx? = null
+        fun close() {
+            val f = fx ?: return
+            val start = layout.virtualOfResult(layout.resultOfFrame(group.first().first) ?: 0)
+            val end = layout.virtualOfResult((layout.resultOfFrame(group.last().last) ?: 0) + 1)
+            runs += FxRun(group, f, start, end)
+        }
+        for ((r, f) in effectRanges()) {
+            if (f != fx) {
+                close()
+                group = mutableListOf()
+                fx = f
+            }
+            group += r
+        }
+        close()
+        return runs
+    }
+
+    /** Stück mit demselben Effekt, das Bild [frame] enthält. */
+    fun runOfFrame(frame: Int): FxRun? = effectRuns().firstOrNull { run -> run.ranges.any { frame in it } }
 
     val blockCount get() = markers.size - 1
 

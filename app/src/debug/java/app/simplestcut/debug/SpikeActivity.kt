@@ -165,10 +165,31 @@ class SpikeActivity : Activity() {
                     // Effekte (für alle Abschnitte gleich): --ei wrot 90, --es wcrop l,t,r,b, --ei srot 90, --es szoom l,t,r,b
                     fun rect(key: String) = intent.getStringExtra(key)?.split(",")?.map { it.toFloat() }
                         ?.let { (l, t, r, b) -> app.simplestcut.effects.CropRect(l, t, r, b) }
-                    val whole = app.simplestcut.effects.WholeFx(intent.getIntExtra("wrot", 0), rect("wcrop"))
-                    val section = app.simplestcut.effects.SectionFx(intent.getIntExtra("srot", 0), rect("szoom"))
+                    // Text/Zensur: --es text "Hallo" (ganzes Video, mit --ez fade true), --es censor "modus,l,t,r,b[,oval]"
+                    // (modus 0 schwarz, 1 verpixeln, 2 weich), --es censorEnd l,t,r,b = mitbewegt bis zum letzten Bild.
+                    val texts = intent.getStringExtra("text")?.let { listOf(app.simplestcut.effects.TextFx(it, fade = intent.getBooleanExtra("fade", false))) } ?: emptyList()
+                    val firstFrame = ranges.first().first
+                    val lastFrame = ranges.last().last
+                    val censors = intent.getStringExtra("censor")?.split(";")?.map { spec ->
+                        val v = spec.split(",")
+                        val r = app.simplestcut.effects.CropRect(v[1].toFloat(), v[2].toFloat(), v[3].toFloat(), v[4].toFloat())
+                        val keys = mutableListOf(app.simplestcut.effects.CensorKey(firstFrame, r))
+                        rect("censorEnd")?.let { keys += app.simplestcut.effects.CensorKey(lastFrame, it) }
+                        app.simplestcut.effects.CensorFx(keys, app.simplestcut.effects.CensorMode.entries[v[0].toInt()], oval = v.getOrNull(5) == "oval", track = keys.size > 1)
+                    } ?: emptyList()
+                    val whole = app.simplestcut.effects.WholeFx(intent.getIntExtra("wrot", 0), rect("wcrop"), texts = texts)
+                    val section = app.simplestcut.effects.SectionFx(intent.getIntExtra("srot", 0), rect("szoom"), censors = censors)
+                    val total = frames.timesUs[lastFrame] - frames.timesUs[firstFrame] + frames.frameDurationUs
+                    var offset = 0L
+                    val timings = segments.map { seg ->
+                        val f0 = frames.clipStart[seg.source] + seg.frames.first
+                        val t0 = frames.timesUs[f0]
+                        val tm = app.simplestcut.effects.SectionTiming(-offset, total - offset, -offset, total - offset) { f -> frames.timesUs[f] - t0 }
+                        offset += (seg.frames.last - seg.frames.first + 1) * frames.frameDurationUs
+                        tm
+                    }
                     val effects = if (whole.isNone && section.isNone) null
-                    else app.simplestcut.effects.EffectPlan(whole, segments.map { section })
+                    else app.simplestcut.effects.EffectPlan(whole, segments.map { section }, timings)
                     Log.i(TAG, "Soll: ${segments.sumOf { it.frames.last - it.frames.first + 1 }} Bilder, mix=${mix?.let { "${it.width}x${it.height} hdr=${it.keepHdr} bitrate=${it.bitrate}" }} effekte=$whole $section")
                     val file = exportCut(this@SpikeActivity, files, segments, app.simplestcut.export.OutputDir.Direct(files.first().parentFile!!), reencode = mode == "export", mix = mix, effects = effects)
                     finishWith("OK mode=$mode zeit=${SystemClock.elapsedRealtime() - t0}ms out=$file")

@@ -12,6 +12,7 @@ A simple Android app for cutting and joining phone videos — frame-accurate, fa
 - **Save:** lossless and in seconds — the video is not re-encoded (cut list in the MP4).
 - **Export:** smart cut — only the frames at the cut edges are re-encoded, everything else is copied 1:1. The result plays everywhere, including messengers.
 - Rotate, crop and zoom (whole video or per piece).
+- Add text (colours, outline/shadow/box, fonts, fade in/out) and censor areas (pixelate, blur or black; rectangle or oval; follows movement with keyframes).
 
 **Join**
 - Join several clips into one video, in any order.

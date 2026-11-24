@@ -1,5 +1,10 @@
 package app.simplestcut.editor
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import app.simplestcut.R
+import androidx.compose.ui.res.stringResource
+
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -69,6 +74,7 @@ fun Timeline(
     val thumbHeightPx = with(density) { 56.dp.toPx() }
     // Abstand zum Bildschirmrand, damit Start/Ende gut greifbar sind.
     val marginPx = with(density) { 28.dp.toPx() }
+    val timelineLabel = stringResource(R.string.timeline)
 
     var widthPx by remember { mutableIntStateOf(0) }
     val innerPx = (widthPx - 2 * marginPx).coerceAtLeast(1f)
@@ -152,6 +158,7 @@ fun Timeline(
         modifier
             .fillMaxWidth()
             .height(80.dp)
+            .semantics { contentDescription = timelineLabel }
             .pointerInput(state) {
                 awaitEachGesture {
                     val down = awaitFirstDown()

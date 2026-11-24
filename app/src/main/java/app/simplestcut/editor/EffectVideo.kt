@@ -100,7 +100,7 @@ fun Modifier.zoomPanGestures(z: ZoomPan, key: Any?, controlsTop: (height: Float)
     }
 
 /** Was gerade im Effekte-Bereich bearbeitet wird (Rahmen über dem Bild). */
-enum class FxEditing { NONE, ROTATE, CROP_WHOLE, ZOOM_SECTION }
+enum class FxEditing { NONE, ROTATE, CROP_WHOLE, ZOOM_SECTION, TEXT, CENSOR }
 
 /**
  * Video im Schnittmodus mit Effekten: eigene TextureView (lässt sich anders als die SurfaceView des PlayerView
@@ -119,17 +119,22 @@ fun EffectVideo(
     editing: FxEditing,
     onWholeCrop: (CropRect) -> Unit,
     onSectionZoom: (CropRect) -> Unit,
+    /** Text und Zensur über dem Bild (und deren Bearbeitung). */
+    overlay: OverlayShown? = null,
     modifier: Modifier = Modifier,
 ) {
     var size by remember { mutableStateOf(IntSize.Zero) }
+    var textureView by remember { mutableStateOf<TextureView?>(null) }
     val zoomPan = remember { ZoomPan() }
     val stage = when (editing) {
         FxEditing.CROP_WHOLE -> PreviewStage.WHOLE_ROTATED
         FxEditing.ZOOM_SECTION -> PreviewStage.WITHOUT_ZOOM
         else -> PreviewStage.FULL
     }
-    // Beim Zuschneiden/Zoomen gehören die Gesten dem Rahmen: Anzeige-Zoom zurück.
-    LaunchedEffect(editing) { if (editing == FxEditing.CROP_WHOLE || editing == FxEditing.ZOOM_SECTION) zoomPan.reset() }
+    // Beim Zuschneiden/Zoomen und bei Text/Zensur gehören die Gesten den Rahmen: Anzeige-Zoom zurück.
+    val framesOwnGestures = editing == FxEditing.CROP_WHOLE || editing == FxEditing.ZOOM_SECTION ||
+        editing == FxEditing.TEXT || editing == FxEditing.CENSOR
+    LaunchedEffect(editing) { if (framesOwnGestures) zoomPan.reset() }
     val geometry = if (size.width > 0 && size.height > 0 && clipW > 0 && clipH > 0) PreviewGeometry(
         clipW.toFloat(), clipH.toFloat(), baseW.toFloat(), baseH.toFloat(), whole, section,
         size.width.toFloat(), size.height.toFloat(), stage,
@@ -139,7 +144,7 @@ fun EffectVideo(
         modifier
             .clipToBounds()
             .onSizeChanged { size = it }
-            .then(if (editing == FxEditing.CROP_WHOLE || editing == FxEditing.ZOOM_SECTION) Modifier else Modifier.zoomPanGestures(zoomPan, editing))
+            .then(if (framesOwnGestures) Modifier else Modifier.zoomPanGestures(zoomPan, editing))
     ) {
         Box(
             Modifier.fillMaxSize().graphicsLayer {
@@ -149,7 +154,6 @@ fun EffectVideo(
                 translationY = zoomPan.pan.y
             }
         ) {
-            var textureView by remember { mutableStateOf<TextureView?>(null) }
             DisposableEffect(player) {
                 onDispose { textureView?.let { player.clearVideoTextureView(it) } }
             }
@@ -182,6 +186,7 @@ fun EffectVideo(
                     drawRect(black, Offset(0f, f.top), Size(max(0f, f.left), f.height))
                     drawRect(black, Offset(f.right, f.top), Size(max(0f, this.size.width - f.right), f.height))
                 }
+                if (overlay != null && !overlay.isEmpty) OverlayLayer(g, textureView, clipW, clipH, overlay)
             }
         }
         if (geometry != null) when (editing) {
@@ -191,6 +196,7 @@ fun EffectVideo(
             FxEditing.ZOOM_SECTION -> CropOverlay(
                 geometry.frame, section.zoom ?: CropRect.FULL, geometry.frameRatio, geometry.frameRatio, onSectionZoom,
             )
+            FxEditing.TEXT, FxEditing.CENSOR -> if (overlay != null) OverlayEditLayer(geometry.frame, overlay)
             else -> {}
         }
     }

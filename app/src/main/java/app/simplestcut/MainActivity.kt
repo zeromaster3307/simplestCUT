@@ -33,6 +33,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Demo-Modus (nur Dev-App, siehe DemoMode): kurz anzeigen, damit man nicht vergisst, dass er an ist.
+        app.simplestcut.demo.DemoMode.folder(this)?.let {
+            android.widget.Toast.makeText(this, "Demo: $it", android.widget.Toast.LENGTH_SHORT).show()
+        }
         setContent {
             val settings = rememberAppSettings()
             val mediaAccess = rememberMediaAccess(settings)

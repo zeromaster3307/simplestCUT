@@ -8,5 +8,10 @@
         <activity
             android:name=".debug.MoveSpikeActivity"
             android:exported="true" />
+        <!-- Demo-Modus für Erklär-Videos (scripts/demo.sh). -->
+        <activity
+            android:name=".debug.DemoActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay" />
     </application>
 </manifest>

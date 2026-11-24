@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -192,6 +194,8 @@ fun EditorScreen(
     var fxTool by remember { mutableStateOf(FxEditing.NONE) }
     var fxWhole by remember { mutableStateOf(false) }
     var fxMenu by remember { mutableStateOf(false) }
+    /** Gewählter Text bzw. Zensur-Bereich (Nummer in der bearbeiteten Liste). */
+    var fxSelected by remember { mutableStateOf<Int?>(null) }
 
     fun startCutting() {
         player.pause()
@@ -215,8 +219,23 @@ fun EditorScreen(
     // Zusammenfügen (und Schneiden aus der Galerie) beginnt direkt im Schnittmodus.
     LaunchedEffect(videos) { if (merge || startInCut) startCutting() }
 
+    /** Effekt-Bearbeitung beenden; leere Texte fallen dabei weg. */
+    fun closeFxTool() {
+        val state = cut
+        if (state != null && fxTool == FxEditing.TEXT) {
+            if (state.whole.texts.any { it.text.isBlank() }) state.whole = state.whole.copy(texts = state.whole.texts.filter { it.text.isNotBlank() })
+            for (b in 0 until state.blockCount) {
+                val fx = state.blockFx(b)
+                if (fx.texts.any { it.text.isBlank() }) state.setBlockFx(b, fx.copy(texts = fx.texts.filter { it.text.isNotBlank() }))
+            }
+        }
+        fxTool = FxEditing.NONE
+        fxSelected = null
+    }
+
     fun leaveCutting() {
         fxTool = FxEditing.NONE
+        fxSelected = null
         if (merge || startInCut) return onBack()
         cut = null
         player.repeatMode = if (settings.loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
@@ -234,7 +253,7 @@ fun EditorScreen(
 
     val c = cut
     BackHandler(enabled = c != null) {
-        if (fxTool != FxEditing.NONE) fxTool = FxEditing.NONE
+        if (fxTool != FxEditing.NONE) closeFxTool()
         else if (c != null && askBeforeLeaving(c)) confirmDiscard = true else leaveCutting()
     }
 
@@ -270,6 +289,27 @@ fun EditorScreen(
                     }
                 }
             }
+        }
+    }
+
+    /** Abspielen/Anhalten im Schnittmodus: ab der Abspielposition, am Ende des Ergebnisses von vorn. */
+    fun togglePlay() {
+        val state = cut ?: return
+        state.selectedEdge = null
+        if (player.isPlaying) {
+            player.pause()
+        } else {
+            val frame = state.frames.frameAt(playheadUs + 999)
+            var piece = state.pieceOfFrame(frame)
+            var start = frame
+            val atEnd = piece == state.layout.parts.lastIndex && frame == state.layout.parts.last().end - 1
+            if (piece == null || atEnd) {
+                piece = 0
+                start = state.layout.parts[0].start
+            }
+            playingPiece = piece
+            if (start != frame || player.playbackState == Player.STATE_ENDED) seekToFrame(state.frames, start)
+            player.play()
         }
     }
 
@@ -384,7 +424,7 @@ fun EditorScreen(
             // Mit Effekten: Abschnitte an den Grenzen der Effekte teilen, je Abschnitt sein Effekt.
             val withFx = if (state.hasEffects) state.effectRanges().flatMap { (r, fx) -> state.frames.segments(listOf(r)).map { it to fx } } else null
             val segments = withFx?.map { it.first } ?: state.frames.segments(ranges)
-            val effects = withFx?.let { list -> EffectPlan(state.whole, list.map { it.second }) }
+            val effects = withFx?.let { list -> EffectPlan(state.whole, list.map { it.second }, sectionTimings(state, segments)) }
             exportJob = scope.launch {
                 try {
                     val out = exportCut(context, videos.map { File(it.path) }, segments, output, onProgress = { p ->
@@ -467,10 +507,13 @@ fun EditorScreen(
                     fxMenu = false
                     player.pause()
                     c?.selectedEdge = null
+                    fxSelected = null
                     fxTool = tool
                 }
                 DropdownMenuItem(text = { Text(stringResource(R.string.fx_rotate)) }, onClick = { open(FxEditing.ROTATE) })
                 DropdownMenuItem(text = { Text(stringResource(R.string.fx_crop)) }, onClick = { open(FxEditing.CROP_WHOLE) })
+                DropdownMenuItem(text = { Text(stringResource(R.string.fx_text)) }, onClick = { open(FxEditing.TEXT) })
+                DropdownMenuItem(text = { Text(stringResource(R.string.fx_censor)) }, onClick = { open(FxEditing.CENSOR) })
                 val block = c?.blockOfFrame(c.frames.frameAt(playheadUs + 999))
                 if (c != null && block != null && c.blockHasFx(block)) {
                     DropdownMenuItem(
@@ -559,7 +602,8 @@ fun EditorScreen(
             }
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        // Tastatur (Text eingeben): Inhalt rückt nach oben, die Leiste bleibt sichtbar.
+        Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
             val density = LocalDensity.current
             Box(
                 Modifier.weight(1f).fillMaxWidth().background(Color.Black).doubleTapSeek(
@@ -580,6 +624,10 @@ fun EditorScreen(
                 if (c != null && clip != null && base != null && (c.hasEffects || fxTool != FxEditing.NONE)) {
                     // Effekte in der Vorschau: eigene Fläche, die sich drehen und zuschneiden lässt.
                     val block = c.blockOfFrame(effectFrame)
+                    val overlay = overlayShown(
+                        c, effectFrame, block, fxTool, fxWhole, fxSelected,
+                        onSelect = { fxSelected = it },
+                    )
                     EffectVideo(
                         player, clip.width, clip.height, base.first, base.second,
                         whole = c.whole,
@@ -591,6 +639,7 @@ fun EditorScreen(
                         },
                         onWholeCrop = { c.whole = c.whole.copy(crop = it, aspect = if (c.whole.aspect == CropAspect.ORIGINAL) CropAspect.FREE else c.whole.aspect) },
                         onSectionZoom = { z -> block?.let { c.setBlockFx(it, c.blockFx(it).copy(zoom = z.takeUnless { r -> r.isFull })) } },
+                        overlay = overlay,
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
@@ -616,7 +665,34 @@ fun EditorScreen(
                     }
                 }
             }
-            if (c != null && fxTool != FxEditing.NONE) {
+            if (c != null && (fxTool == FxEditing.TEXT || fxTool == FxEditing.CENSOR)) {
+                val frame = c.frames.frameAt(playheadUs + 999)
+                val block = c.blockOfFrame(frame)
+                val wholeScope = fxWhole || block == null || c.blockCount <= 1
+                if (fxTool == FxEditing.TEXT) {
+                    TextPanel(
+                        cut = c, block = block, wholeScope = fxWhole, onScope = { fxWhole = it },
+                        selected = fxSelected, onSelect = { fxSelected = it }, onDone = ::closeFxTool,
+                    )
+                } else {
+                    val base = mix?.let { it.width to it.height } ?: clipFormats.firstOrNull()?.let { it.width to it.height } ?: (16 to 9)
+                    val (ow, oh) = c.whole.outputSize(base.first, base.second)
+                    val range = if (wholeScope) 0 until c.layout.totalFrames else c.markers[block!!] until c.markers[block + 1]
+                    CensorPanel(
+                        cut = c, block = block, wholeScope = fxWhole, onScope = { fxWhole = it },
+                        selected = fxSelected, onSelect = { fxSelected = it },
+                        frame = frame, frameRatio = ow.toFloat() / oh,
+                        scrub = ScrubControl(
+                            range = range,
+                            position = c.layout.resultOfFrame(frame) ?: range.first,
+                            isPlaying = isPlaying,
+                            onScrub = { r -> showFrame(c.layout.frameOfResult(r)) },
+                            onPlayPause = ::togglePlay,
+                        ),
+                        onDone = ::closeFxTool,
+                    )
+                }
+            } else if (c != null && fxTool != FxEditing.NONE) {
                 val base = mix?.let { it.width to it.height } ?: clipFormats.firstOrNull()?.let { it.width to it.height } ?: (16 to 9)
                 val (rw, rh) = c.whole.rotatedSize(base.first, base.second)
                 EffectPanel(
@@ -626,7 +702,7 @@ fun EditorScreen(
                     wholeScope = fxWhole,
                     onScope = { fxWhole = it },
                     rotatedRatio = rw.toFloat() / rh,
-                    onDone = { fxTool = FxEditing.NONE },
+                    onDone = ::closeFxTool,
                 )
             } else if (c != null) {
                 CutControls(
@@ -648,25 +724,7 @@ fun EditorScreen(
                         player.setScrubbingModeEnabled(false)
                         c.selectedEdge?.let { showFrame(c.edgeFrame(it)) }
                     },
-                    onPlayPause = {
-                        c.selectedEdge = null
-                        if (player.isPlaying) {
-                            player.pause()
-                        } else {
-                            val frame = c.frames.frameAt(playheadUs + 999)
-                            // Ab der Abspielposition; am Ende des Ergebnisses von vorn.
-                            var piece = c.pieceOfFrame(frame)
-                            var start = frame
-                            val atEnd = piece == c.layout.parts.lastIndex && frame == c.layout.parts.last().end - 1
-                            if (piece == null || atEnd) {
-                                piece = 0
-                                start = c.layout.parts[0].start
-                            }
-                            playingPiece = piece
-                            if (start != frame || player.playbackState == Player.STATE_ENDED) seekToFrame(c.frames, start)
-                            player.play()
-                        }
-                    },
+                    onPlayPause = ::togglePlay,
                 )
             }
         }

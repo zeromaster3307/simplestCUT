@@ -1,6 +1,9 @@
 package app.simplestcut.gallery
 
 import app.simplestcut.storage.StorageFolders
+import app.simplestcut.demo.DemoMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.filterNotNull
 import androidx.compose.runtime.snapshotFlow
@@ -160,6 +163,8 @@ fun GalleryScreen(
         reloadKey++
     }
 
+    val demoFolder = remember { DemoMode.folder(context) }
+
     // Android meldet jede Änderung an den Videos; daraufhin neu laden.
     DisposableEffect(Unit) {
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -186,9 +191,14 @@ fun GalleryScreen(
     LaunchedEffect(access, reloadKey) {
         // Kurz warten, weil Android bei einer Änderung oft mehrere Meldungen schickt; jede neue bricht das Warten ab.
         if (videos != null) delay(300)
-        val loaded = if (access == Access.NONE) emptyList() else loadVideos(context)
+        val loaded = when {
+            access == Access.NONE -> emptyList()
+            // Demo-Modus: nur der Demo-Ordner, kein Papierkorb
+            demoFolder != null -> loadVideos(context).filter { DemoMode.contains(demoFolder, it.path) }
+            else -> loadVideos(context)
+        }
         videos = loaded
-        trash = if (access == Access.NONE) emptyList() else loadTrashedVideos(context)
+        trash = if (access == Access.NONE || demoFolder != null) emptyList() else loadTrashedVideos(context)
         val existing = (loaded + trash).map { it.uri }.toSet()
         selected = selected.intersect(existing)
     }
@@ -296,12 +306,13 @@ fun GalleryScreen(
                         Box {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.combinedClickable(onClick = { folderMenuOpen = true }),
+                                // Im Demo-Modus kein Ordner-Menü (es zeigte die Namen aller Ordner).
+                                modifier = Modifier.combinedClickable(onClick = { if (demoFolder == null) folderMenuOpen = true }),
                             ) {
                                 val name = if (inTrash) stringResource(R.string.trash)
                                 else folders.firstOrNull { it.id == folderId }?.name ?: stringResource(R.string.all_videos)
                                 Text(name)
-                                Icon(Icons.Filled.ArrowDropDown, contentDescription = stringResource(R.string.choose_folder))
+                                if (demoFolder == null) Icon(Icons.Filled.ArrowDropDown, contentDescription = stringResource(R.string.choose_folder))
                             }
                             DropdownMenu(expanded = folderMenuOpen, onDismissRequest = { folderMenuOpen = false }) {
                                 DropdownMenuItem(
@@ -537,6 +548,8 @@ private fun VideoGrid(
                     .animateItem()
                     .aspectRatio(1f)
                     .combinedClickable(onClick = { onTap(video) }, onLongClick = { onLongPress(video) })
+                    // Für Screenreader (und die Aufnahme-Skripte der Erklär-Videos): Name des Videos
+                    .semantics { contentDescription = video.name }
             ) {
                 VideoThumbnail(video.uri, Modifier.fillMaxSize())
                 if (isSelected) {

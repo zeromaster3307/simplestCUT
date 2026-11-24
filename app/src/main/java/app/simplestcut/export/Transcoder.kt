@@ -7,6 +7,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.Effect
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Crop
+import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.ScaleAndRotateTransformation
 import androidx.media3.transformer.Composition
@@ -22,6 +23,7 @@ import androidx.media3.transformer.VideoEncoderSettings
 import app.simplestcut.effects.CropRect
 import app.simplestcut.effects.EffectPlan
 import app.simplestcut.effects.SectionFx
+import app.simplestcut.effects.SectionTiming
 import app.simplestcut.merge.MixSettings
 import app.simplestcut.mp4.Mp4Source
 import app.simplestcut.mp4.Segment
@@ -79,7 +81,7 @@ suspend fun transcodeMix(
             .build()
         EditedMediaItem.Builder(
             MediaItem.Builder().setUri(src.file.toURI().toString()).setClippingConfiguration(clip).build()
-        ).setEffects(Effects(emptyList(), videoEffects(presentation, fitOut, effects, effects?.sections?.getOrNull(index)))).build()
+        ).setEffects(Effects(emptyList(), videoEffects(presentation, fitOut, effects, effects?.sections?.getOrNull(index), effects?.timings?.getOrNull(index)))).build()
     }
     // Clips ohne Ton bekommen Stille, damit der Ton der anderen synchron bleibt.
     val sequence = EditedMediaItemSequence.Builder(items).experimentalSetForceAudioTrack(true).build()
@@ -125,7 +127,13 @@ suspend fun transcodeMix(
 
 /** Bildeffekte eines Abschnitts in Media3-Reihenfolge, siehe [transcodeMix]. */
 @OptIn(UnstableApi::class)
-private fun videoEffects(base: Presentation, fitOut: () -> Presentation, plan: EffectPlan?, section: SectionFx?): List<Effect> {
+private fun videoEffects(
+    base: Presentation,
+    fitOut: () -> Presentation,
+    plan: EffectPlan?,
+    section: SectionFx?,
+    timing: SectionTiming?,
+): List<Effect> {
     val list = mutableListOf<Effect>(base)
     val whole = plan?.whole ?: return list
     rotate(whole.rotation)?.let { list += it }
@@ -136,6 +144,13 @@ private fun videoEffects(base: Presentation, fitOut: () -> Presentation, plan: E
     }
     section?.zoom?.let { list += crop(it) }
     if (list.size > 1) list += fitOut()
+    // Zensur und Text auf dem fertigen Ergebnisbild, Text zuoberst.
+    val censors = whole.censors + (section?.censors ?: emptyList())
+    for (chunk in censors.chunked(CENSORS_PER_PASS)) list += CensorEffect(chunk, timing)
+    val sectionTexts = section?.texts ?: emptyList()
+    if (whole.texts.isNotEmpty() || sectionTexts.isNotEmpty()) {
+        list += OverlayEffect(listOf(TextBitmapOverlay(whole.texts, sectionTexts, timing)))
+    }
     return list
 }
 

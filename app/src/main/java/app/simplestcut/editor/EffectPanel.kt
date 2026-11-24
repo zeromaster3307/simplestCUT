@@ -116,7 +116,7 @@ fun EffectPanel(
                     Hint(stringResource(R.string.fx_zoom_hint))
                 }
             }
-            FxEditing.NONE -> {}
+            FxEditing.NONE, FxEditing.TEXT, FxEditing.CENSOR -> {}
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = {
